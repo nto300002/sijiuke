@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 function MainComponent() {
   const [practiceTexts, setPracticeTexts] = useState([]);
@@ -8,47 +8,80 @@ function MainComponent() {
   const [isCorrect, setIsCorrect] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState(null);
+  const [isTextRevealed, setIsTextRevealed] = useState(false);
+  const [speechRate, setSpeechRate] = useState(1.0);
+  const [difficulty, setDifficulty] = useState('normal'); // 'easy', 'normal', 'hard'
+
+  // 難易度に応じてテキストを生成する関数
+  const generateText = useCallback(async (selectedDifficulty) => {
+    try {
+      const response = await fetch("/api/generate-text", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ difficulty: selectedDifficulty })
+      });
+
+      if (!response.ok) throw new Error("練習テキストの取得に失敗しました");
+      
+      const data = await response.json();
+      if (data.text) {
+        setCurrentText(data.text);
+        setPracticeTexts([{
+          id: 1,
+          text: data.text,
+          who: "",
+          when: "",
+          what: "",
+          where: "",
+          how: ""
+        }]);
+        setUserInput(""); // 入力をリセット
+        setIsCorrect(null); // 正誤判定をリセット
+        setIsTextRevealed(false); // テキスト表示をリセット
+      }
+    } catch (err) {
+      console.error(err);
+      setError("テキストの生成に失敗しました");
+    }
+  }, []);
 
   useEffect(() => {
-    fetch("/api/practice-texts", {
-      method: "POST",
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("練習テキストの取得に失敗しました");
-        return res.json();
-      })
-      .then((data) => {
-        if (data.texts && data.texts.length > 0) {
-          setPracticeTexts(data.texts);
-          setCurrentText(data.texts[0].text);
-        }
-      })
-      .catch((err) => {
-        console.error(err);
-        setError("テキストの読み込みに失敗しました");
-      });
+    generateText(difficulty);
   }, []);
 
   const playText = useCallback(async () => {
     try {
       setIsPlaying(true);
-      const audio = new Audio(
-        `/integrations/text-to-speech/speech?text=${encodeURIComponent(
-          currentText
-        )}`
-      );
-      audio.onended = () => setIsPlaying(false);
-      audio.onerror = () => {
+      setError(null);
+      
+      // Web Speech APIの設定
+      const utterance = new SpeechSynthesisUtterance(currentText);
+      utterance.lang = 'ja-JP';  // 日本語に設定
+      utterance.rate = speechRate;  // スライダーで調整された読み上げ速度
+      utterance.pitch = 1.0;     // 音の高さ
+      utterance.volume = 1.0;    // 音量
+      
+      // 読み上げ終了時のハンドラ
+      utterance.onend = () => {
         setIsPlaying(false);
-        setError("音声の再生に失敗しました");
       };
-      await audio.play();
+      
+      // エラー発生時のハンドラ
+      utterance.onerror = () => {
+        setIsPlaying(false);
+        setError('音声の再生に失敗しました');
+      };
+      
+      // 音声合成の開始
+      window.speechSynthesis.speak(utterance);
     } catch (err) {
       console.error(err);
       setIsPlaying(false);
-      setError("音声の再生に失敗しました");
+      setError('音声の再生に失敗しました');
     }
-  }, [currentText]);
+  }, [currentText, speechRate]);
 
   const checkAnswer = useCallback(async () => {
     if (!userInput.trim()) {
@@ -58,6 +91,7 @@ function MainComponent() {
 
     const correct = userInput.trim() === currentText.trim();
     setIsCorrect(correct);
+    setIsTextRevealed(true);
 
     try {
       await fetch("/api/save-practice-attempt", {
@@ -81,6 +115,49 @@ function MainComponent() {
         聞き取り練習
       </h1>
 
+      {/* 難易度選択ボタン */}
+      <div className="flex justify-center gap-4 mb-8">
+        <button
+          onClick={() => {
+            setDifficulty('easy');
+            generateText('easy');
+          }}
+          className={`px-4 py-2 rounded-lg font-semibold transition-colors
+            ${difficulty === 'easy' 
+              ? 'bg-blue-600 text-white' 
+              : 'bg-gray-200 text-gray-700 hover:bg-green-100'}`}
+        >
+          Easy
+          <span className="block text-xs">(20-30文字)</span>
+        </button>
+        <button
+          onClick={() => {
+            setDifficulty('normal');
+            generateText('normal');
+          }}
+          className={`px-4 py-2 rounded-lg font-semibold transition-colors
+            ${difficulty === 'normal' 
+              ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' 
+              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+        >
+          Normal
+          <span className="block text-xs">(40-50文字)</span>
+        </button>
+        <button
+          onClick={() => {
+            setDifficulty('hard');
+            generateText('hard');
+          }}
+          className={`px-4 py-2 rounded-lg font-semibold transition-colors
+            ${difficulty === 'hard' 
+              ? 'bg-blue-600 text-white' 
+              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+        >
+          Hard
+          <span className="block text-xs">(60-70文字)</span>
+        </button>
+      </div>
+
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
@@ -89,8 +166,13 @@ function MainComponent() {
 
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-2">練習テキスト:</h2>
+        <p className="text-sm font-semibold mb-2">難易度:  {difficulty}</p>
         <div className="border border-gray-300 rounded-lg p-4 bg-white shadow-sm">
-          <p className="text-lg">{currentText}</p>
+          <p className={`text-lg transition-all duration-300 ${
+            isTextRevealed ? '' : 'blur-md select-none'
+          }`}>
+            {currentText}
+          </p>
         </div>
       </div>
 
@@ -111,6 +193,29 @@ function MainComponent() {
       </button>
 
       <div className="mb-8">
+        <div className="flex items-center justify-between mb-2">
+          <label htmlFor="speech-rate" className="text-sm font-medium text-gray-700">
+            読み上げ速度: {speechRate.toFixed(1)}x
+          </label>
+        </div>
+        <input
+          type="range"
+          id="speech-rate"
+          min="0.5"
+          max="2"
+          step="0.1"
+          value={speechRate}
+          onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+        />
+        <div className="flex justify-between text-xs text-gray-500 mt-1">
+          <span>0.5x</span>
+          <span>1.0x</span>
+          <span>2.0x</span>
+        </div>
+      </div>
+
+      <div className="mb-8">
         <h2 className="text-xl font-semibold mb-2">
           聞いた内容を入力してください:
         </h2>
@@ -129,22 +234,7 @@ function MainComponent() {
         </button>
       </div>
 
-      {isCorrect !== null && (
-        <div
-          className={`p-4 rounded-lg ${
-            isCorrect
-              ? "bg-green-100 text-green-700"
-              : "bg-red-100 text-red-700"
-          }`}
-        >
-          <i
-            className={`fas ${
-              isCorrect ? "fa-check-circle" : "fa-times-circle"
-            } mr-2`}
-          ></i>
-          {isCorrect ? "正解です！" : "不正解です。もう一度聞いてみましょう。"}
-        </div>
-      )}
+
     </div>
   );
 }
