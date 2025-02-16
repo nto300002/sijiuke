@@ -7,7 +7,7 @@ export const metadata = {
   title: '指示受け練習アプリ',
   description: '指示受けを練習できるアプリです',
   icons: {
-    icon: '/suit.png',
+    icon: '/suit_favi.png',
   },
 }
 
